@@ -33,19 +33,23 @@ def webhook():
     req = request.get_json(silent=True, force=True)
     
     # fetch action from json
+
     try:
         action = req.get('queryResult').get('action')
     except AttributeError:
         return 'json error'
-    
+
     if action == 'showBookings':
         res = show_bookings(req)
     elif action == 'bookSeminar':
         res = book_seminar(req)
     elif action == 'seminarInfo':
         res = seminar_info(req)
+    elif action == 'cancelSeminar':
+        res = cancel_seminar(req)
     else:
         log.error('Unexpected action.')
+        print('error')
 
     print('Action: ' + action)
     print('Response: ' + res)
@@ -69,7 +73,7 @@ def show_bookings(req):
     for i in range(len(employees)):
         if employees[i]["First_name"] == firstname:
             if employees[i]["Last_name"] == lastname:
-                matchingID = employees[i]["employee_id"]
+                matchingID = employees[i]["employee_id"]-1
                 break
     
     if 'matchingID' in locals():
@@ -131,7 +135,7 @@ def book_seminar(req):
     for i in range(len(employees)):
         if employees[i]["First_name"] == firstname:
             if employees[i]["Last_name"] == lastname:
-                employee_id = employees[i]["employee_id"]
+                employee_id = employees[i]["employee_id"]-1
                 break
 
     #check availability
@@ -142,7 +146,7 @@ def book_seminar(req):
             breaker = False
             for k in range(len(seminars[j]["description"])):
                 if seminars[j]["description"][k].lower() == course.lower():
-                    seminar_id = seminars[j]["seminar_id"]
+                    seminar_id = seminars[j]["seminar_id"]-1
                     breaker = True
                     break
             if breaker== True:
@@ -215,7 +219,7 @@ def seminar_info(req):
         breaker = False
         for k in range(len(seminars[j]["description"])):
             if seminars[j]["description"][k].lower() == course.lower():
-                seminar_id = seminars[j]["seminar_id"]
+                seminar_id = seminars[j]["seminar_id"]-1
                 breaker = True
                 break
         if breaker == True:
@@ -228,6 +232,77 @@ def seminar_info(req):
     else:
         res = "We don't have seminars that matches your request."
 
+    return res
+
+def cancel_seminar(req):
+    firstname = req.get('queryResult').get('parameters').get('firstname')
+    lastname = req.get('queryResult').get('parameters').get('lastname')
+    course = req.get('queryResult').get('parameters').get('course')
+    city = req.get('queryResult').get('parameters').get('city')
+    seminar_date = req.get('queryResult').get('parameters').get('date')
+
+    employeesRef = db.reference('employees')
+    employees = employeesRef.get()
+    seminarRef = db.reference('seminars')
+    seminars = seminarRef.get()
+    bookingRef = db.reference('bookings')
+    bookings = bookingRef.get()
+    countRef = db.reference('counts')
+    counts = countRef.get()
+
+    res = "You are not in the database. Please contact HR."
+    #matching employer's name with their ID
+    for i in range(len(employees)):
+        if employees[i]["First_name"] == firstname:
+            if employees[i]["Last_name"] == lastname:
+                employee_id = employees[i]["employee_id"]-1
+                break
+
+    #matching seminar ID
+    for j in range(len(seminars)):
+        breaker = False
+        for k in range(len(seminars[j]["description"])):
+            if seminars[j]["description"][k].lower() == course.lower():
+                seminar_id = seminars[j]["seminar_id"]-1
+                res = "You don't have bookings according your request."
+                breaker = True
+                break
+        if breaker:
+            break
+    
+    breaker = False
+    if 'employee_id' in locals() and 'seminar_id' in locals():
+        #search for corresponding booking
+        for j in range(len(bookings)):
+            if bookings[j]["employee_id"] == employee_id and bookings[j]["seminar_id"]== seminar_id and datetime.datetime.strptime(bookings[j]["date"], '%d/%m/%y').date() > date.today():
+                breaker_1 = True
+                breaker_2 = True
+
+                #check date in case user defined date
+                if seminar_date != "":
+                    breaker_1 = (seminar_date == datetime.datetime.strptime(bookings["date"][j], '%d/%m/%y').date())
+
+                #check location in case user defined date
+                if city != "":
+                    breaker_2 = (city == bookings[j]["location"])
+
+                breaker = breaker_1 and breaker_2
+
+            if breaker:
+                #cancel booking by deleting entries
+                seminar_date = bookings[j]["date"]
+                cancellation = course + " for " + seminar_date + " in " + city + " cancelled on " + str(date.today())
+                bookingRef.update({
+                            str(j): {
+                                'date': "",
+                                'employee_id': "",
+                                'location': "",
+                                'seminar_id': "",
+                                'seminar_title': "",
+                				'cancellation': cancellation
+                            }})
+                res = "Your seminar booking for " + course + " on " + seminar_date + " in " + city + " has been cancelled. You will receive a cancellation confirmation."
+                break
     return res
 
 # run the app
