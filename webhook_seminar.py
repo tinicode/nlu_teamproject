@@ -33,13 +33,12 @@ def webhook():
     req = request.get_json(silent=True, force=True)
     
     # fetch action from json
-
     try:
         action = req.get('queryResult').get('action')
     except AttributeError:
         return 'json error'
 
-    if action == 'showBookings':
+    if action == 'get_names':
         res = show_bookings(req)
     elif action == 'bookSeminar':
         res = book_seminar(req)
@@ -59,60 +58,68 @@ def webhook():
 
 # function for responses
 def show_bookings(req):
-    # Initialize result as empty    
-    res = "You are not in our database. Please contact HR."
+    # Initialise result as empty    
+    resp = "Your are not in our database. Please contact HR."
     
-    firstname = req.get('queryResult').get('parameters').get('firstname')
-    lastname = req.get('queryResult').get('parameters').get('lastname')
-    bookingtype = req.get('queryResult').get('parameters').get('bookingtype')
+    # fetch parameters from json
+    
+    display_option = req.get('queryResult').get('outputContexts')[0].get('parameters').get('display-option.original')
+    date = req.get('queryResult').get('outputContexts')[0].get('parameters').get('date.original')
+    firstname = req.get('queryResult').get('parameters').get('given-name')
+    lastname = req.get('queryResult').get('parameters').get('last-name')
+    date_period = req.get('queryResult').get('outputContexts')[0].get('parameters').get('date-period')
+    bookingtype = req.get('queryResult').get('parameters').get('booking-type')
+    city = req.get('queryResult').get('outputContexts')[0].get('parameters').get('geo-city')
     
     employeesRef = db.reference('employees')
     employees = employeesRef.get()
-    
-    #matching employer's name with their ID
+   
     for i in range(len(employees)):
         if employees[i]["First_name"] == firstname:
             if employees[i]["Last_name"] == lastname:
-                matchingID = employees[i]["employee_id"]-1
+                matchingID = employees[i]["employee_id"]
                 break
-    
+                
     if 'matchingID' in locals():
         bookingRef = db.reference('bookings')
         bookings = bookingRef.get()
-        bookedSeminars = []
+        bookedSeminars = set([])
 
-        #collecting booked seminars
-        i=0
-        if bookingtype == 'past':
-            while i < len(bookings):
-                if bookings[i]["employee_id"] == matchingID and datetime.datetime.strptime(bookings[i]["date"], '%d/%m/%y').date() < date.today():
-                    sem = bookings[i]["seminar_title"] + " on " + str(bookings[i]["date"]) + " in " + bookings[i]["location"]
-                    bookedSeminars.append(sem)
-                i+=1
-            bookedSeminars = ', '.join(bookedSeminars)       
-        elif bookingtype == 'upcoming':
-            while i < len(bookings):
-                if bookings[i]["employee_id"] == matchingID and datetime.datetime.strptime(bookings[i]["date"], '%d/%m/%y').date() >= date.today():
-                    sem = bookings[i]["seminar_title"] + " on " + str(bookings[i]["date"]) + " in " + bookings[i]["location"]
-                    bookedSeminars.append(sem)
-                i+=1
-            bookedSeminars = ', '.join(bookedSeminars) 
+        for i in range(len(bookings)):
+            if  bookings[i]["employee_id"] == matchingID:
+                
+                if bookingtype == 'past' and dateparser.parse(bookings[i]["date"]).date() < date.today():
+                    sem = bookings[i]["seminar_title"] + " on " + bookings[i]["date"] + " in " + bookings[i]["location"]
+                    bookedSeminars.add(sem)
+
+                elif bookingtype == 'upcoming' and dateparser.parse(bookings[i]["date"]).date() >= date.today():
+                    sem = bookings[i]["seminar_title"] + " on " + bookings[i]["date"] + " in " + bookings[i]["location"]
+                    bookedSeminars.add(sem)
+
+                else:
+                    sem = bookings[i]["seminar_title"]
+                    bookedSeminars.add(sem)
+
+        if len(bookedSeminars) != 0:
+            if display_option == "next" or display_option == "upcoming":
+                resp = "This is your next seminar: " + showNextBooking(bookedSeminars)
+            elif date:
+                resp = showBookingsOnGivenDate(date,bookedSeminars,matchingID)
+            elif date_period:
+                dateStart = date_period["startDate"]
+                dateEnd = date_period["endDate"]
+                resp = showBookingsWithinPeriod(dateStart, dateEnd, bookedSeminars, matchingID)
+            elif city:
+                resp = showBoookingsAtLocation(city, bookedSeminars, matchingID)
+            else:
+                bookedSeminars = ', '.join(bookedSeminars)   
+                resp = "These are your booked seminars: " + bookedSeminars
         else:
-            while i < len(bookings):
-                if bookings[i]["employee_id"] == matchingID:
-                    sem = bookings[i]["seminar_title"] + " on " + str(bookings[i]["date"]) + " in " + bookings[i]["location"]
-                    bookedSeminars.append(sem)
-                i+=1
-            bookedSeminars = ', '.join(bookedSeminars) 
+            resp = "There are no recorded bookings for you."
 
-        if not bookedSeminars:
-            res = "There are no seminars according your request."
-        else: 
-            res = "These are your booked seminars: " + bookedSeminars
-
+    return resp
  # TO BE DONE: chronological sorting, next seminar (week, month)
  # return a fulfillment response
-    return res
 
 def book_seminar(req):
     res = "You are not in our database. Please contact HR."
@@ -304,6 +311,88 @@ def cancel_seminar(req):
                 res = "Your seminar booking for " + course + " on " + seminar_date + " in " + city + " has been cancelled. You will receive a cancellation confirmation."
                 break
     return res
+
+def showNextBooking(bookedSeminars):      
+    
+    bookingRef = db.reference('bookings')
+    bookings = bookingRef.get()
+    
+    # Initialise date of next booking with first date in the list and iterate through all dates
+    for i in range(len(bookings)):
+        if bookings[i]["seminar_title"] in bookedSeminars:           
+            temp = bookings[i]["date"]
+            dateNext = dateparser.parse(temp).date() 
+            break
+             
+    for i in range(1,len(bookings)):
+        if bookings[i]["seminar_title"] in bookedSeminars:      
+            temp = bookings[i]["date"] 
+            if dateparser.parse(temp).date() <= dateNext:
+                dateNext = dateparser.parse(temp).date() 
+                num = i 
+
+    return bookings[num]["seminar_title"]
+
+def showBookingsOnGivenDate(date,bookedSeminars,matchingID):
+        
+    bookingRef = db.reference('bookings')
+    bookings = bookingRef.get()    
+    given_date = dateparser.parse(date) 
+    
+    matchedSeminars = set([])
+                    
+    for i in range(len(bookings)):
+        if (bookings[i]["seminar_title"] in bookedSeminars and
+        dateparser.parse(bookings[i]["date"]) == given_date and
+        bookings[i]["employee_id"] == matchingID):
+            
+            sem = bookings[i]["seminar_title"]
+            matchedSeminars.add(sem)
+            
+    if len(matchedSeminars) != 0:
+        return "Your booked seminars on " + date + ": " + ', '.join(matchedSeminars)
+    else:
+        return "There are no recorded bookings for you within the specified period."    
+    
+def showBookingsWithinPeriod(dateStart,dateEnd,bookedSeminars, matchingID):
+    bookingRef = db.reference('bookings')
+    bookings = bookingRef.get()
+    start = dateparser.parse(dateStart)
+    end = dateparser.parse(dateEnd)
+    
+#   If bookings between start and end, add them to the list of matched seminars
+
+    matchedSeminars = set([])                    
+    for i in range(len(bookings)):
+        if (bookings[i]["seminar_title"] in bookedSeminars and
+        start <= pytz.utc.localize(dateparser.parse(bookings[i]["date"])) <= end and
+        bookings[i]["employee_id"] == matchingID):
+            
+            sem = bookings[i]["seminar_title"]
+            matchedSeminars.add(sem)
+            
+    if len(matchedSeminars) != 0:
+        return "Your booked seminars between " + start.strftime("%d.%m.%y") + " and " + end.strftime("%d.%m.%Y") + ": " + ', '.join(matchedSeminars)
+    else:
+        return "There are no recorded bookings for you within the specified period."            
+    
+def showBoookingsAtLocation(city, bookedSeminars, matchingID):
+    bookingRef = db.reference('bookings')
+    bookings = bookingRef.get()
+
+    matchedSeminars = set([])                    
+    for i in range(len(bookings)):    
+        if (bookings[i]["seminar_title"] in bookedSeminars and
+        bookings[i]["location"] == city and
+        bookings[i]["employee_id"] == matchingID):
+            
+            sem = bookings[i]["seminar_title"]
+            matchedSeminars.add(sem)
+            
+    if len(matchedSeminars) != 0:
+        return "Your booked seminars in " + city + ": " + ', '.join(matchedSeminars)
+    else:
+        return "There are no recorded bookings for you in " + city               
 
 # run the app
 if __name__ == '__main__':
