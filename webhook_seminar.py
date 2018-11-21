@@ -299,7 +299,7 @@ def cancel_seminar(req):
     
                     #check date in case user defined date
                     if seminar_date != "":
-                        breaker_1 = (dateparser.parse(seminar_date) == dateparser.parse(bookings[j]["date"]))
+                        breaker_1 = (dateparser.parse(seminar_date).date() == dateparser.parse(bookings[j]["date"]).date())
     
                     #check location in case user defined date
                     if city != "":
@@ -346,14 +346,14 @@ def showBookingsOnGivenDate(seminar_date,bookedSeminars,matchingID):
         
     bookingRef = db.reference('bookings')
     bookings = bookingRef.get()    
-    given_date = dateparser.parse(seminar_date) 
+    given_date = dateparser.parse(seminar_date).date() 
     
     matchedSeminars = set([])
                     
     for i in range(len(bookings)):
         if not "cancellation" in bookings[i]:
             if (bookings[i]["seminar_title"] in bookedSeminars and
-            dateparser.parse(bookings[i]["date"]) == given_date and
+            dateparser.parse(bookings[i]["date"]).date() == given_date and
             bookings[i]["employee_id"] == matchingID):
                 
                 sem = bookings[i]["seminar_title"]
